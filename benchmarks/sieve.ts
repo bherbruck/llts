@@ -1,29 +1,27 @@
-// Prime sieve — tests integer arithmetic and tight loops with bitwise ops.
+// Prime sieve — tests integer arithmetic and tight loops.
 
-function sieve_count(limit: number): number {
-  // We simulate a boolean sieve using arithmetic on a rolling window.
-  // Since we don't have arrays with push, we count primes via trial division.
-  let count: number = 0;
-  let n: number = 2;
+function sieve_count(limit: i32): i32 {
+  let count: i32 = 0 as i32;
+  let n: i32 = 2 as i32;
 
   while (n <= limit) {
-    let is_prime: number = 1;
-    let d: number = 2;
+    let is_prime: i32 = 1 as i32;
+    let d: i32 = 2 as i32;
     while (d * d <= n) {
-      if (n - Math.floor(n / d) * d == 0) {
-        is_prime = 0;
+      if (n % d == (0 as i32)) {
+        is_prime = 0 as i32;
         d = n; // break
       }
-      d = d + 1;
+      d = d + (1 as i32);
     }
     count = count + is_prime;
-    n = n + 1;
+    n = n + (1 as i32);
   }
 
   return count;
 }
 
 export function main(): void {
-  const result: number = sieve_count(200000);
+  const result: i32 = sieve_count(200000 as i32);
   print(result);
 }
