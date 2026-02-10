@@ -6,12 +6,29 @@ LLTS compiles a strict TypeScript subset directly to native machine code via LLV
 source.ts → oxc_parser → analysis → LLVM IR → native binary
 ```
 
+### Performance
+
+Same algorithms, same source (where applicable). LLTS -O2 vs GCC -O2, rustc -O, Bun, and Node.js v25:
+
+| Benchmark         | LLTS       | C          | Rust   | Bun    | Node.js |
+| ----------------- | ---------- | ---------- | ------ | ------ | ------- |
+| sieve(200k)       | **0.012s** | 0.013s     | 0.012s | 0.036s | 0.152s  |
+| fib(40)           | 0.247s     | **0.124s** | 0.187s | 0.568s | 0.985s  |
+| ackermann(3,12)   | 0.433s     | **0.244s** | 0.447s | 2.095s | DNF     |
+| leibniz_pi(100M)  | 0.113s     | **0.107s** | 0.111s | 0.130s | 0.247s  |
+| spectral_norm(3k) | **0.193s** | 0.194s     | 0.200s | 0.280s | 0.367s  |
+| euler_sum(500M)   | 0.531s     | **0.504s** | 0.508s | 0.531s | 0.654s  |
+| mandelbrot(16k)   | 1.959s     | **1.958s** | 2.059s | 1.913s | 2.104s  |
+| nbody(50M)        | **1.705s** | —          | —      | 4.259s | 2.891s  |
+
+LLTS matches C/Rust on float-heavy workloads and beats both Bun and Node.js on 7 of 8 benchmarks. Ackermann DNF = Node.js stack overflow. Linux x86_64, `bash benchmarks/run.sh` to reproduce.
+
 ## Install
 
 Requires LLVM 21 and a C linker (cc/gcc/clang).
 
 ```bash
-# Ubuntu/Debian — install LLVM 21
+# Ubuntu/Debian - install LLVM 21
 wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
 echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/llvm.list
 sudo apt-get update && sudo apt-get install -y llvm-21-dev
@@ -59,22 +76,22 @@ Options:
 
 ## Language Features
 
-LLTS supports a compilable subset of TypeScript. Everything looks like normal TypeScript — your IDE, linter, and formatter work as usual.
+LLTS supports a compilable subset of TypeScript. Everything looks like normal TypeScript - your IDE, linter, and formatter work as usual.
 
 ### Numeric Types
 
 Beyond `number` (f64), LLTS provides fixed-width numeric types via ambient declarations:
 
 ```typescript
-let a: i32 = 42;        // 32-bit signed integer
-let b: u64 = 100;       // 64-bit unsigned integer
-let c: f32 = 3.14;      // 32-bit float
-let d: f64 = 2.718;     // 64-bit float (same as `number`)
+let a: i32 = 42; // 32-bit signed integer
+let b: u64 = 100; // 64-bit unsigned integer
+let c: f32 = 3.14; // 32-bit float
+let d: f64 = 2.718; // 64-bit float (same as `number`)
 ```
 
 Full set: `i8`, `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `f32`, `f64`
 
-Implicit widening is supported — `i8` promotes to `i32`, integers promote to floats when mixed.
+Implicit widening is supported - `i8` promotes to `i32`, integers promote to floats when mixed.
 
 ### Structs (Interfaces & Types)
 
@@ -159,7 +176,7 @@ Supports constraints (`extends`), default type parameters (`<T = f64>`), and typ
 
 ### Enums
 
-Enums compile to integer constants — fully inlined, no runtime object:
+Enums compile to integer constants - fully inlined, no runtime object:
 
 ```typescript
 enum Direction {
@@ -181,11 +198,11 @@ function main(): void {
 }
 ```
 
-String enums are also supported — string values become compile-time-only, stored as integer tags at runtime.
+String enums are also supported - string values become compile-time-only, stored as integer tags at runtime.
 
 ### Unions
 
-**Nullable types** — `T | null` compiles to `Option<T>`:
+**Nullable types** - `T | null` compiles to `Option<T>`:
 
 ```typescript
 function find(arr: f64[], target: f64): f64 | null {
@@ -218,15 +235,17 @@ type Shape =
 
 function area(s: Shape): f64 {
   switch (s.kind) {
-    case "circle": return 3.14159 * s.radius * s.radius;
-    case "rect":   return s.width * s.height;
+    case "circle":
+      return 3.14159 * s.radius * s.radius;
+    case "rect":
+      return s.width * s.height;
   }
 }
 ```
 
 ### Error Handling
 
-`try/catch/throw` compiles to `Result<T, E>` branching — no LLVM exceptions, no stack unwinding:
+`try/catch/throw` compiles to `Result<T, E>` branching - no LLVM exceptions, no stack unwinding:
 
 ```typescript
 function divide(a: f64, b: f64): f64 {
@@ -280,25 +299,25 @@ function main(): void {
 
 ### Compilation Pipeline
 
-| Stage | Tool | Purpose |
-|-------|------|---------|
-| 1. Parse | oxc_parser | TypeScript source → typed AST |
-| 2. Semantic Analysis | oxc_semantic | Scopes, symbols, bindings |
-| 3. Module Resolution | oxc_resolver | Resolve import paths |
-| 4. Subset Validation | llts_analysis | Enforce compilable TS rules |
-| 5. Type Resolution | llts_driver | Map TS types → LLVM types |
-| 6. Code Generation | llts_codegen | AST → LLVM IR (via Inkwell) |
-| 7. Optimization & Emit | LLVM | Passes → object file → linker |
+| Stage                  | Tool          | Purpose                       |
+| ---------------------- | ------------- | ----------------------------- |
+| 1. Parse               | oxc_parser    | TypeScript source → typed AST |
+| 2. Semantic Analysis   | oxc_semantic  | Scopes, symbols, bindings     |
+| 3. Module Resolution   | oxc_resolver  | Resolve import paths          |
+| 4. Subset Validation   | llts_analysis | Enforce compilable TS rules   |
+| 5. Type Resolution     | llts_driver   | Map TS types → LLVM types     |
+| 6. Code Generation     | llts_codegen  | AST → LLVM IR (via Inkwell)   |
+| 7. Optimization & Emit | LLVM          | Passes → object file → linker |
 
 ### Memory Model
 
 No garbage collector. No manual memory management. The compiler uses a three-tier strategy:
 
-1. **Stack allocation** — default for primitives and small structs
-2. **Escape analysis** — heap promotion only when values escape their scope
-3. **Compile-time reference counting** — Lobster-style ARC eliminates ~95% of refcount operations at compile time
+1. **Stack allocation** - default for primitives and small structs
+2. **Escape analysis** - heap promotion only when values escape their scope
+3. **Compile-time reference counting** - Lobster-style ARC eliminates ~95% of refcount operations at compile time
 
-This is invisible to the developer — no ownership annotations, no lifetime syntax.
+This is invisible to the developer - no ownership annotations, no lifetime syntax.
 
 ### What's Not Supported
 
@@ -328,23 +347,6 @@ llts/
 ├── benchmarks/            # Performance benchmarks (LLTS vs Bun)
 └── editor/vscode/         # VS Code extension with TypeScript plugin
 ```
-
-## Benchmarks
-
-LLTS native binaries (-O2) vs Bun and Node.js on the same TypeScript source (lower is better):
-
-| Benchmark | LLTS | Bun | Node.js | vs Bun | vs Node |
-|---|---|---|---|---|---|
-| sieve(200k) | 0.011s | 0.035s | 0.150s | **3.18x** | **13.6x** |
-| ackermann(3,12) | 0.465s | 2.169s | DNF | **4.66x** | — |
-| fib(40) | 0.251s | 0.565s | 0.967s | **2.25x** | **3.85x** |
-| nbody(50M steps) | 1.703s | 4.343s | 2.993s | **2.55x** | **1.76x** |
-| leibniz_pi(100M) | 0.109s | 0.130s | 0.238s | **1.19x** | **2.18x** |
-| spectral_norm(3k) | 0.192s | 0.284s | 0.357s | **1.48x** | **1.86x** |
-| euler_sum(500M) | 0.522s | 0.525s | 0.661s | **1.01x** | **1.27x** |
-| mandelbrot(16k) | 1.944s | 1.894s | 1.158s | 0.97x | 0.60x |
-
-Node.js v25, Bun 1.x. Ackermann DNF = stack overflow on Node. Measured on Linux x86_64. Run `bash benchmarks/run.sh` to reproduce.
 
 ## VS Code Extension
 
