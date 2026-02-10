@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "types": [],
+    "plugins": [{ "name": "llts-ts-plugin" }]
+  },
+  "include": [
+    "editor/vscode/llts/llts-prelude.d.ts",
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "examples/**/*.ts"
+  ]
+}

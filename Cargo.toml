@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/llts_frontend",
+    "crates/llts_analysis",
+    "crates/llts_codegen",
+    "crates/llts_driver",
+    "crates/llts_cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+# oxc frontend
+oxc_allocator = "*"
+oxc_ast = "*"
+oxc_diagnostics = "*"
+oxc_parser = "*"
+oxc_resolver = "*"
+oxc_semantic = "*"
+oxc_span = "*"
+
+# llvm backend
+inkwell = { version = "0.8.0", features = ["llvm21-1"] }
+
+# workspace crates
+llts_frontend = { path = "crates/llts_frontend" }
+llts_analysis = { path = "crates/llts_analysis" }
+llts_codegen = { path = "crates/llts_codegen" }
+llts_driver = { path = "crates/llts_driver" }

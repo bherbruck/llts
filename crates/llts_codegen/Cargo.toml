@@ -1,0 +1,7 @@
+[package]
+name = "llts_codegen"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+inkwell.workspace = true

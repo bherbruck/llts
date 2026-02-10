@@ -1,0 +1,20 @@
+{
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.validate.enable": true,
+  "typescript.suggest.enabled": true,
+
+  "files.associations": {
+    "*.ts": "typescript"
+  },
+
+  "editor.defaultFormatter": "vscode.typescript-language-features",
+
+  "[typescript]": {
+    "editor.defaultFormatter": "vscode.typescript-language-features"
+  },
+
+  "eslint.enable": false,
+  "biome.enabled": false,
+  "oxc.enable": false,
+  "deno.enable": false
+}

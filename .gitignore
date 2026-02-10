@@ -1,0 +1,28 @@
+# Rust build output
+/target/
+
+# LLTS build output (compiled binaries)
+/build/
+
+# Object files
+*.o
+
+# Default binary output
+a.out
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.idea/
+
+# Node (for editor extension)
+node_modules/
+
+# Env
+.env
+.env.*

@@ -1,0 +1,37 @@
+{
+  "name": "llts",
+  "displayName": "LLTS",
+  "description": "TypeScript to native compiler — IDE support via branded types and compiler integration",
+  "version": "0.0.1",
+  "publisher": "llts",
+  "engines": {
+    "vscode": "^1.89.0"
+  },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["workspaceContains:tsconfig.json"],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "llts.build",
+        "title": "LLTS: Build"
+      },
+      {
+        "command": "llts.run",
+        "title": "LLTS: Run"
+      }
+    ],
+    "languages": [
+      {
+        "id": "typescript",
+        "extensions": [".ts"]
+      }
+    ],
+    "typescriptServerPlugins": [
+      {
+        "name": "llts-ts-plugin",
+        "enableForWorkspaceTypeScriptVersions": true
+      }
+    ]
+  }
+}

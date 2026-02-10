@@ -1,0 +1,12 @@
+[package]
+name = "llts_analysis"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+llts_frontend.workspace = true
+oxc_allocator.workspace = true
+oxc_ast.workspace = true
+oxc_semantic.workspace = true
+oxc_span.workspace = true
+thiserror = "2"

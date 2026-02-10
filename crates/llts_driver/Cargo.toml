@@ -1,0 +1,13 @@
+[package]
+name = "llts_driver"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+llts_frontend.workspace = true
+llts_analysis.workspace = true
+llts_codegen.workspace = true
+oxc_allocator.workspace = true
+oxc_ast.workspace = true
+oxc_span.workspace = true
+inkwell.workspace = true
