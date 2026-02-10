@@ -1,6 +1,6 @@
 # LLTS — TypeScript to Native Compiler
 
-LLTS compiles a strict TypeScript subset directly to native machine code via LLVM. Unlike TypeScript runtimes that strip types and run JavaScript, LLTS treats types as real contracts and produces native binaries — like Rust, Swift, or Zig, but the source looks like TypeScript.
+LLTS compiles TypeScript directly to native machine code via LLVM. Unlike TypeScript runtimes that strip types and run JavaScript, LLTS treats types as real contracts and produces native binaries — like Rust, Swift, or Zig, but the source is TypeScript.
 
 ```
 source.ts → oxc_parser → analysis → LLVM IR → native binary
