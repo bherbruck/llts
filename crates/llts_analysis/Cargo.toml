@@ -2,6 +2,9 @@
 name = "llts_analysis"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "LLTS analysis — subset validation and type resolution"
 
 [dependencies]
 llts_frontend.workspace = true

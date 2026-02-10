@@ -2,6 +2,9 @@
 name = "llts_frontend"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "LLTS frontend — oxc parser and semantic analysis wrappers"
 
 [dependencies]
 oxc_allocator.workspace = true

@@ -11,22 +11,24 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/bherbruck/llts"
 
 [workspace.dependencies]
 # oxc frontend
-oxc_allocator = "*"
-oxc_ast = "*"
-oxc_diagnostics = "*"
-oxc_parser = "*"
-oxc_resolver = "*"
-oxc_semantic = "*"
-oxc_span = "*"
+oxc_allocator = "0.113"
+oxc_ast = "0.113"
+oxc_diagnostics = "0.113"
+oxc_parser = "0.113"
+oxc_resolver = "11"
+oxc_semantic = "0.113"
+oxc_span = "0.113"
 
 # llvm backend
 inkwell = { version = "0.8.0", features = ["llvm21-1"] }
 
 # workspace crates
-llts_frontend = { path = "crates/llts_frontend" }
-llts_analysis = { path = "crates/llts_analysis" }
-llts_codegen = { path = "crates/llts_codegen" }
-llts_driver = { path = "crates/llts_driver" }
+llts_frontend = { version = "0.1.0", path = "crates/llts_frontend" }
+llts_analysis = { version = "0.1.0", path = "crates/llts_analysis" }
+llts_codegen = { version = "0.1.0", path = "crates/llts_codegen" }
+llts_driver = { version = "0.1.0", path = "crates/llts_driver" }

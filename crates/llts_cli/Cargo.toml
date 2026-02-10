@@ -2,6 +2,9 @@
 name = "llts"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TypeScript to native compiler via LLVM"
 
 [dependencies]
 llts_driver.workspace = true
