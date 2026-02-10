@@ -16,7 +16,7 @@ struct Cli {
     output: Option<String>,
 
     /// Optimization level (0-3).
-    #[arg(short = 'O', long = "opt-level", default_value = "0")]
+    #[arg(short = 'O', long = "opt-level", default_value = "2")]
     opt_level: u8,
 
     /// Emit LLVM IR text instead of a binary.

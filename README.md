@@ -8,18 +8,6 @@ source.ts → oxc_parser → analysis → LLVM IR → native binary
 
 ## Quick Start
 
-### Prerequisites
-
-- Rust (2024 edition)
-- LLVM 21.1 (for the Inkwell backend)
-- A C linker (cc/gcc/clang)
-
-### Build
-
-```bash
-cargo build --release
-```
-
 ### Hello World
 
 ```typescript
@@ -35,9 +23,6 @@ function main(): void {
 
 # Or compile and run immediately
 ./target/release/llts_cli hello.ts --run
-
-# With optimizations
-./target/release/llts_cli hello.ts -O2 --run
 ```
 
 ## Usage
@@ -50,7 +35,7 @@ Arguments:
 
 Options:
   -o, --output <OUTPUT>      Output file path [default: build/<name>]
-  -O, --opt-level <0-3>      Optimization level [default: 0]
+  -O, --opt-level <0-3>      Optimization level [default: 2]
       --emit-ir              Emit LLVM IR text instead of a binary
   -r, --run                  Compile and run immediately (temp binary cleaned up)
 ```
@@ -355,6 +340,30 @@ Detailed documentation is available in the `docs/` directory:
 [Async/Await](docs/v2/async.md) | [Generators](docs/v2/generators.md) | [Collections](docs/v2/collections.md)
 
 See also: [GUIDE.md](GUIDE.md) for design philosophy and key decisions.
+
+## Install
+
+Requires LLVM 21 and a C linker (cc/gcc/clang).
+
+```bash
+# Ubuntu/Debian — install LLVM 21
+wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/llvm.list
+sudo apt-get update && sudo apt-get install -y llvm-21-dev
+
+# macOS
+brew install llvm@21
+
+# Install LLTS via cargo
+LLVM_SYS_211_PREFIX=/usr/lib/llvm-21 cargo install --git https://github.com/bherbruck/llts.git llts_cli
+```
+
+### Build from Source
+
+```bash
+export LLVM_SYS_211_PREFIX=/usr/lib/llvm-21  # adjust to your LLVM install path
+cargo build --release
+```
 
 ## License
 
