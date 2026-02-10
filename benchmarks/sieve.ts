@@ -10,7 +10,7 @@ function sieve_count(limit: i32): i32 {
     while (d * d <= n) {
       if (n % d == (0 as i32)) {
         is_prime = 0 as i32;
-        d = n; // break
+        break;
       }
       d = d + (1 as i32);
     }
