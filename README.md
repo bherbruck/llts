@@ -331,13 +331,20 @@ llts/
 
 ## Benchmarks
 
-Run the benchmark suite comparing LLTS (native, -O2) against Bun:
+LLTS native binaries (-O2) vs Bun on the same TypeScript source (lower is better):
 
-```bash
-bash benchmarks/run.sh
-```
+| Benchmark | LLTS | Bun | Speedup |
+|---|---|---|---|
+| ackermann(3,12) | 0.427s | 2.184s | **5.11x** |
+| sieve(200k) | 0.012s | 0.037s | **3.08x** |
+| nbody(50M steps) | 1.758s | 3.321s | **1.89x** |
+| fib(40) | 0.259s | 0.566s | **2.19x** |
+| spectral_norm(3k) | 0.194s | 0.288s | **1.48x** |
+| leibniz_pi(100M) | 0.113s | 0.137s | **1.21x** |
+| euler_sum(500M) | 0.523s | 0.548s | **1.05x** |
+| mandelbrot(16k) | 1.953s | 1.915s | 0.98x |
 
-Benchmarks include: fibonacci, mandelbrot, leibniz pi, n-body, sieve of eratosthenes, spectral norm, ackermann, and euler sum.
+Measured on Linux x86_64. Run `bash benchmarks/run.sh` to reproduce.
 
 ## VS Code Extension
 
