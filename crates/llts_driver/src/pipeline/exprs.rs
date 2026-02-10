@@ -614,6 +614,50 @@ pub(crate) fn lower_array_element(el: &ArrayExpressionElement<'_>, ctx: &mut Low
 pub(crate) fn try_lower_as_assign(expr: &Expression<'_>, ctx: &mut LowerCtx) -> Option<Stmt> {
     match expr {
         Expression::AssignmentExpression(assign) => {
+            // Check if the target is a field access (e.g. obj.field = value)
+            if let AssignmentTarget::StaticMemberExpression(member) = &assign.left {
+                let obj_name = expr_to_name(&member.object);
+                let field_name = member.property.name.to_string();
+
+                if let Some(obj_type) = ctx.var_types.get(&obj_name).cloned() {
+                    if let LltsType::Struct { name: struct_name, .. } = &obj_type {
+                        if let Some((field_index, field_type)) = ctx.lookup_field(struct_name, &field_name) {
+                            let value = if assign.operator == AssignmentOperator::Assign {
+                                lower_expr(&assign.right, ctx)
+                            } else {
+                                let op = match assign.operator {
+                                    AssignmentOperator::Addition => BinOp::Add,
+                                    AssignmentOperator::Subtraction => BinOp::Sub,
+                                    AssignmentOperator::Multiplication => BinOp::Mul,
+                                    AssignmentOperator::Division => BinOp::Div,
+                                    AssignmentOperator::Remainder => BinOp::Rem,
+                                    AssignmentOperator::ShiftLeft => BinOp::Shl,
+                                    AssignmentOperator::ShiftRight => BinOp::Shr,
+                                    AssignmentOperator::BitwiseAnd => BinOp::BitAnd,
+                                    AssignmentOperator::BitwiseOR => BinOp::BitOr,
+                                    AssignmentOperator::BitwiseXOR => BinOp::BitXor,
+                                    _ => BinOp::Add,
+                                };
+                                let lhs = Expr::FieldAccess {
+                                    object: Box::new(lower_expr(&member.object, ctx)),
+                                    object_type: obj_type.clone(),
+                                    field_index,
+                                    field_type: field_type.clone(),
+                                };
+                                let rhs = lower_expr(&assign.right, ctx);
+                                Expr::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs), ty: field_type.clone() }
+                            };
+                            return Some(Stmt::FieldAssign {
+                                object_name: obj_name,
+                                object_type: obj_type,
+                                field_index,
+                                value,
+                            });
+                        }
+                    }
+                }
+            }
+
             let target = assignment_target_name(&assign.left);
             let value = if assign.operator == AssignmentOperator::Assign {
                 lower_expr(&assign.right, ctx)

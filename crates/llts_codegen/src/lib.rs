@@ -69,6 +69,13 @@ pub enum Stmt {
         target: String,
         value: Expr,
     },
+    /// `obj.field = value;`
+    FieldAssign {
+        object_name: String,
+        object_type: LltsType,
+        field_index: u32,
+        value: Expr,
+    },
     /// `if (cond) { then } else { else }`
     If {
         condition: Expr,
@@ -444,6 +451,14 @@ impl<'ctx> CodeGenerator<'ctx> {
                 let val = self.emit_expr(value);
                 let (ptr, _) = self.variables[target].clone();
                 StmtCodegen::build_assignment(&self.builder, ptr, val);
+            }
+            Stmt::FieldAssign { object_name, object_type, field_index, value } => {
+                let val = self.emit_expr(value);
+                let (ptr, _) = self.variables[object_name].clone();
+                let field_ptr = ExprCodegen::build_struct_field_access(
+                    &self.builder, &mut self.registry, ptr, object_type, *field_index, "field_store",
+                );
+                StmtCodegen::build_assignment(&self.builder, field_ptr, val);
             }
             Stmt::If {
                 condition,
