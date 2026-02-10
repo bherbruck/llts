@@ -331,20 +331,20 @@ llts/
 
 ## Benchmarks
 
-LLTS native binaries (-O2) vs Bun on the same TypeScript source (lower is better):
+LLTS native binaries (-O2) vs Bun and Node.js on the same TypeScript source (lower is better):
 
-| Benchmark | LLTS | Bun | Speedup |
-|---|---|---|---|
-| ackermann(3,12) | 0.427s | 2.184s | **5.11x** |
-| sieve(200k) | 0.012s | 0.037s | **3.08x** |
-| nbody(50M steps) | 1.758s | 3.321s | **1.89x** |
-| fib(40) | 0.259s | 0.566s | **2.19x** |
-| spectral_norm(3k) | 0.194s | 0.288s | **1.48x** |
-| leibniz_pi(100M) | 0.113s | 0.137s | **1.21x** |
-| euler_sum(500M) | 0.523s | 0.548s | **1.05x** |
-| mandelbrot(16k) | 1.953s | 1.915s | 0.98x |
+| Benchmark | LLTS | Bun | Node.js | vs Bun | vs Node |
+|---|---|---|---|---|---|
+| sieve(200k) | 0.011s | 0.035s | 0.150s | **3.18x** | **13.6x** |
+| ackermann(3,12) | 0.465s | 2.169s | DNF | **4.66x** | — |
+| fib(40) | 0.251s | 0.565s | 0.967s | **2.25x** | **3.85x** |
+| nbody(50M steps) | 1.703s | 4.343s | 2.993s | **2.55x** | **1.76x** |
+| leibniz_pi(100M) | 0.109s | 0.130s | 0.238s | **1.19x** | **2.18x** |
+| spectral_norm(3k) | 0.192s | 0.284s | 0.357s | **1.48x** | **1.86x** |
+| euler_sum(500M) | 0.522s | 0.525s | 0.661s | **1.01x** | **1.27x** |
+| mandelbrot(16k) | 1.944s | 1.894s | 1.158s | 0.97x | 0.60x |
 
-Measured on Linux x86_64. Run `bash benchmarks/run.sh` to reproduce.
+Node.js v25, Bun 1.x. Ackermann DNF = stack overflow on Node. Measured on Linux x86_64. Run `bash benchmarks/run.sh` to reproduce.
 
 ## VS Code Extension
 
