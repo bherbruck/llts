@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 echo "Building LLTS (release)..."
 cargo build --release 2>&1 | tail -1
 
-LLTS=./target/release/llts_cli
+LLTS=./target/release/llts
 BENCHMARKS=(fib mandelbrot leibniz_pi nbody sieve spectral_norm ackermann euler_sum)
 
 for bench in "${BENCHMARKS[@]}"; do

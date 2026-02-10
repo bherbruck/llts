@@ -6,6 +6,23 @@ LLTS compiles a strict TypeScript subset directly to native machine code via LLV
 source.ts → oxc_parser → analysis → LLVM IR → native binary
 ```
 
+## Install
+
+Requires LLVM 21 and a C linker (cc/gcc/clang).
+
+```bash
+# Ubuntu/Debian — install LLVM 21
+wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/llvm.list
+sudo apt-get update && sudo apt-get install -y llvm-21-dev
+
+# macOS
+brew install llvm@21
+
+# Install LLTS via cargo
+LLVM_SYS_211_PREFIX=/usr/lib/llvm-21 cargo install --git https://github.com/bherbruck/llts.git llts_cli
+```
+
 ## Quick Start
 
 ### Hello World
@@ -19,10 +36,10 @@ function main(): void {
 
 ```bash
 # Compile to native binary
-./target/release/llts_cli hello.ts
+llts hello.ts
 
 # Or compile and run immediately
-./target/release/llts_cli hello.ts --run
+llts hello.ts --run
 ```
 
 ## Usage
@@ -303,7 +320,7 @@ llts/
 │   ├── llts_analysis/     # Subset validation, type resolution
 │   ├── llts_codegen/      # LLVM IR generation via Inkwell
 │   ├── llts_driver/       # Pipeline orchestration
-│   └── llts_cli/          # CLI binary
+│   └── llts/          # CLI binary
 ├── std/prelude.ts         # Ambient type declarations (i32, Option, etc.)
 ├── docs/                  # Architecture & feature documentation
 ├── tests/run/             # Compile + execute test suite
@@ -340,30 +357,6 @@ Detailed documentation is available in the `docs/` directory:
 [Async/Await](docs/v2/async.md) | [Generators](docs/v2/generators.md) | [Collections](docs/v2/collections.md)
 
 See also: [GUIDE.md](GUIDE.md) for design philosophy and key decisions.
-
-## Install
-
-Requires LLVM 21 and a C linker (cc/gcc/clang).
-
-```bash
-# Ubuntu/Debian — install LLVM 21
-wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
-echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/llvm.list
-sudo apt-get update && sudo apt-get install -y llvm-21-dev
-
-# macOS
-brew install llvm@21
-
-# Install LLTS via cargo
-LLVM_SYS_211_PREFIX=/usr/lib/llvm-21 cargo install --git https://github.com/bherbruck/llts.git llts_cli
-```
-
-### Build from Source
-
-```bash
-export LLVM_SYS_211_PREFIX=/usr/lib/llvm-21  # adjust to your LLVM install path
-cargo build --release
-```
 
 ## License
 

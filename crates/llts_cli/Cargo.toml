@@ -3,6 +3,10 @@ name = "llts_cli"
 version.workspace = true
 edition.workspace = true
 
+[[bin]]
+name = "llts"
+path = "src/main.rs"
+
 [dependencies]
 llts_driver.workspace = true
 inkwell.workspace = true
