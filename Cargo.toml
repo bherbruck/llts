@@ -5,7 +5,7 @@ members = [
     "crates/llts_analysis",
     "crates/llts_codegen",
     "crates/llts_driver",
-    "crates/llts_cli",
+    "crates/llts_cli",  # package name: llts
 ]
 
 [workspace.package]

@@ -19,8 +19,8 @@ sudo apt-get update && sudo apt-get install -y llvm-21-dev
 # macOS
 brew install llvm@21
 
-# Install LLTS via cargo
-LLVM_SYS_211_PREFIX=/usr/lib/llvm-21 cargo install --git https://github.com/bherbruck/llts.git llts_cli
+# Install LLTS
+cargo install llts
 ```
 
 ## Quick Start

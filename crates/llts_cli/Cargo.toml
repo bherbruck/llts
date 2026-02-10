@@ -1,11 +1,7 @@
 [package]
-name = "llts_cli"
+name = "llts"
 version.workspace = true
 edition.workspace = true
-
-[[bin]]
-name = "llts"
-path = "src/main.rs"
 
 [dependencies]
 llts_driver.workspace = true
