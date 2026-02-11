@@ -10,7 +10,7 @@ use llts_codegen::{
 
 use super::context::LowerCtx;
 use super::utils::{
-    assignment_target_name, binding_name, expr_to_name, infer_ir_binary_type,
+    assignment_target_name, binding_name, coerce_to_type, expr_to_name, infer_ir_binary_type,
     ir_expr_type, lower_binop, lower_unaryop, simple_target_name,
 };
 use super::{codegen_type_suffix, lower_stmts, lower_ts_type_with_enums, mangle_generic_name};
@@ -101,9 +101,21 @@ pub(crate) fn lower_expr(expr: &Expression<'_>, ctx: &mut LowerCtx) -> Expr {
                 }
             }
             let op = lower_binop(bin.operator);
-            let lhs_expr = lower_expr(&bin.left, ctx);
-            let rhs_expr = lower_expr(&bin.right, ctx);
-            // Use the lowered expression types (which have proper ctx-aware types)
+            let mut lhs_expr = lower_expr(&bin.left, ctx);
+            let mut rhs_expr = lower_expr(&bin.right, ctx);
+            // Coerce literals to match the other operand's type
+            // (e.g. `i == 1` where i is i64 → coerce 1 from f64 to i64)
+            let lhs_ty = ir_expr_type(&lhs_expr);
+            let rhs_ty = ir_expr_type(&rhs_expr);
+            if lhs_ty != rhs_ty {
+                let lhs_is_lit = matches!(lhs_expr, Expr::FloatLit { .. } | Expr::IntLit { .. });
+                let rhs_is_lit = matches!(rhs_expr, Expr::FloatLit { .. } | Expr::IntLit { .. });
+                if rhs_is_lit && !lhs_is_lit {
+                    rhs_expr = coerce_to_type(rhs_expr, &lhs_ty);
+                } else if lhs_is_lit && !rhs_is_lit {
+                    lhs_expr = coerce_to_type(lhs_expr, &rhs_ty);
+                }
+            }
             let ty = infer_ir_binary_type(&lhs_expr, &rhs_expr);
             Expr::Binary { op, lhs: Box::new(lhs_expr), rhs: Box::new(rhs_expr), ty }
         }
@@ -114,7 +126,7 @@ pub(crate) fn lower_expr(expr: &Expression<'_>, ctx: &mut LowerCtx) -> Expr {
             Expr::Unary { op, operand: Box::new(operand_expr), ty }
         }
         Expression::CallExpression(call) => {
-            let args: Vec<Expr> = call.arguments.iter().map(|a| lower_argument(a, ctx)).collect();
+            let mut args: Vec<Expr> = call.arguments.iter().map(|a| lower_argument(a, ctx)).collect();
 
             match &call.callee {
                 Expression::StaticMemberExpression(member) => {
@@ -137,12 +149,65 @@ pub(crate) fn lower_expr(expr: &Expression<'_>, ctx: &mut LowerCtx) -> Expr {
                         };
                     }
 
+                    // Dispatch array and string methods
+                    let receiver_type = ctx.var_types.get(&obj_name).cloned();
+                    let (class_name, ret_type) = match &receiver_type {
+                        Some(LltsType::Array(elem)) => {
+                            let ret = match method.as_str() {
+                                "push" => LltsType::Void,
+                                "pop" => *elem.clone(),
+                                "indexOf" => LltsType::I64,
+                                "includes" => LltsType::Bool,
+                                _ => LltsType::Void,
+                            };
+                            // Coerce push/indexOf/includes args to elem type
+                            if matches!(method.as_str(), "push" | "indexOf" | "includes") {
+                                for arg in args.iter_mut() {
+                                    // Patch StructLit args for struct arrays
+                                    if let Expr::StructLit { struct_type, fields } = arg {
+                                        if let LltsType::Struct { name: sname, .. } = elem.as_ref() {
+                                            if matches!(struct_type, LltsType::Struct { name: n, .. } if n.is_empty()) {
+                                                *struct_type = ctx.full_struct_type(sname);
+                                            }
+                                            if let LltsType::Struct { fields: type_fields, .. } = struct_type {
+                                                for (j, (_, field_ty)) in type_fields.iter().enumerate() {
+                                                    if j < fields.len() {
+                                                        let old = std::mem::replace(&mut fields[j], Expr::BoolLit(false));
+                                                        fields[j] = coerce_to_type(old, field_ty);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    let old = std::mem::replace(arg, Expr::BoolLit(false));
+                                    *arg = coerce_to_type(old, elem);
+                                }
+                            }
+                            ("__Array".to_string(), ret)
+                        }
+                        Some(LltsType::String) => {
+                            let ret = match method.as_str() {
+                                "charAt" | "slice" | "toUpperCase" | "toLowerCase"
+                                | "trim" | "substring" | "repeat" => LltsType::String,
+                                "charCodeAt" | "indexOf" | "lastIndexOf" => LltsType::I64,
+                                "includes" | "startsWith" | "endsWith" => LltsType::Bool,
+                                _ => LltsType::Void,
+                            };
+                            ("__String".to_string(), ret)
+                        }
+                        _ => {
+                            // Non-array/string method: coerce args via fn_param_types
+                            coerce_call_args(&mut args, &obj_name, ctx);
+                            (obj_name.clone(), LltsType::Void)
+                        },
+                    };
+
                     Expr::MethodCall {
-                        class_name: obj_name,
+                        class_name,
                         method_name: method,
                         receiver: Box::new(lower_expr(&member.object, ctx)),
                         args,
-                        ret_type: LltsType::Void,
+                        ret_type,
                     }
                 }
                 Expression::Identifier(id) => {
@@ -226,6 +291,7 @@ pub(crate) fn lower_expr(expr: &Expression<'_>, ctx: &mut LowerCtx) -> Expr {
                     }
 
                     let ret_type = ctx.fn_ret_types.get(&callee).cloned().unwrap_or(LltsType::Void);
+                    coerce_call_args(&mut args, &callee, ctx);
                     Expr::Call {
                         callee,
                         args,
@@ -264,19 +330,66 @@ pub(crate) fn lower_expr(expr: &Expression<'_>, ctx: &mut LowerCtx) -> Expr {
                 };
             }
 
+            // Math constants: Math.PI, Math.E, etc.
+            if obj_name == "Math" {
+                let const_val = match field_name.as_str() {
+                    "PI" => Some(std::f64::consts::PI),
+                    "E" => Some(std::f64::consts::E),
+                    "LN2" => Some(std::f64::consts::LN_2),
+                    "LN10" => Some(std::f64::consts::LN_10),
+                    "LOG2E" => Some(std::f64::consts::LOG2_E),
+                    "LOG10E" => Some(std::f64::consts::LOG10_E),
+                    "SQRT2" => Some(std::f64::consts::SQRT_2),
+                    "SQRT1_2" => Some(std::f64::consts::FRAC_1_SQRT_2),
+                    _ => None,
+                };
+                if let Some(v) = const_val {
+                    return Expr::FloatLit { value: v, ty: LltsType::F64 };
+                }
+            }
+
             let object = Box::new(lower_expr(&member.object, ctx));
 
-            // Try to resolve the object's struct type for field access
-            if let Some(obj_type) = ctx.var_types.get(&obj_name).cloned() {
-                if let LltsType::Struct { name: struct_name, .. } = &obj_type {
-                    if let Some((field_index, field_type)) = ctx.lookup_field(struct_name, &field_name) {
-                        return Expr::FieldAccess {
-                            object,
-                            object_type: obj_type.clone(),
-                            field_index,
-                            field_type,
-                        };
+            // .length on arrays and strings
+            if field_name == "length" {
+                if let Some(obj_type) = ctx.var_types.get(&obj_name).cloned() {
+                    match &obj_type {
+                        LltsType::Array(_) => {
+                            // Array { ptr, len, cap } — len is at index 1
+                            return Expr::FieldAccess {
+                                object,
+                                object_type: obj_type.clone(),
+                                field_index: 1,
+                                field_type: LltsType::I64,
+                            };
+                        }
+                        LltsType::String => {
+                            // String { ptr, len } — len is at index 1
+                            return Expr::FieldAccess {
+                                object,
+                                object_type: obj_type.clone(),
+                                field_index: 1,
+                                field_type: LltsType::I64,
+                            };
+                        }
+                        _ => {}
                     }
+                }
+            }
+
+            // Try to resolve the object's struct type for field access.
+            // First try var_types by name, then fall back to inferring from the IR.
+            let obj_type = ctx.var_types.get(&obj_name).cloned()
+                .unwrap_or_else(|| ir_expr_type(&object));
+
+            if let LltsType::Struct { name: struct_name, .. } = &obj_type {
+                if let Some((field_index, field_type)) = ctx.lookup_field(struct_name, &field_name) {
+                    return Expr::FieldAccess {
+                        object,
+                        object_type: obj_type.clone(),
+                        field_index,
+                        field_type,
+                    };
                 }
             }
 
@@ -313,10 +426,7 @@ pub(crate) fn lower_expr(expr: &Expression<'_>, ctx: &mut LowerCtx) -> Expr {
                 name: name.clone(),
                 ty: ty.clone(),
             };
-            let one = Expr::FloatLit {
-                value: 1.0,
-                ty: LltsType::F64,
-            };
+            let one = coerce_to_type(Expr::FloatLit { value: 1.0, ty: LltsType::F64 }, &ty);
             let op = if update.operator == UpdateOperator::Increment {
                 BinOp::Add
             } else {
@@ -513,12 +623,38 @@ pub(crate) fn lower_expr(expr: &Expression<'_>, ctx: &mut LowerCtx) -> Expr {
                                 };
                             }
 
+                            // Dispatch array and string methods (chain expression)
+                            let receiver_type = ctx.var_types.get(&obj_name).cloned();
+                            let (class_name, ret_type) = match &receiver_type {
+                                Some(LltsType::Array(elem)) => {
+                                    let ret = match method.as_str() {
+                                        "push" => LltsType::Void,
+                                        "pop" => *elem.clone(),
+                                        "indexOf" => LltsType::I64,
+                                        "includes" => LltsType::Bool,
+                                        _ => LltsType::Void,
+                                    };
+                                    ("__Array".to_string(), ret)
+                                }
+                                Some(LltsType::String) => {
+                                    let ret = match method.as_str() {
+                                        "charAt" | "slice" | "toUpperCase" | "toLowerCase"
+                                        | "trim" | "substring" | "repeat" => LltsType::String,
+                                        "charCodeAt" | "indexOf" | "lastIndexOf" => LltsType::I64,
+                                        "includes" | "startsWith" | "endsWith" => LltsType::Bool,
+                                        _ => LltsType::Void,
+                                    };
+                                    ("__String".to_string(), ret)
+                                }
+                                _ => (obj_name.clone(), LltsType::Void),
+                            };
+
                             Expr::MethodCall {
-                                class_name: obj_name,
+                                class_name,
                                 method_name: method,
                                 receiver: Box::new(lower_expr(&member.object, ctx)),
                                 args,
-                                ret_type: LltsType::Void,
+                                ret_type,
                             }
                         }
                         Expression::Identifier(id) => {
@@ -609,6 +745,36 @@ pub(crate) fn lower_array_element(el: &ArrayExpressionElement<'_>, ctx: &mut Low
     }
 }
 
+/// Coerce function call arguments to match declared parameter types.
+/// Patches StructLit args (duck typing) and coerces numeric literals.
+fn coerce_call_args(args: &mut Vec<Expr>, callee: &str, ctx: &mut LowerCtx) {
+    if let Some(param_types) = ctx.fn_param_types.get(callee).cloned() {
+        for (i, param_ty) in param_types.iter().enumerate() {
+            if i >= args.len() { break; }
+            // Patch StructLit with empty name to match param struct type
+            if let Expr::StructLit { struct_type, fields } = &mut args[i] {
+                if let LltsType::Struct { name: param_name, .. } = param_ty {
+                    if matches!(struct_type, LltsType::Struct { name: n, .. } if n.is_empty()) {
+                        *struct_type = ctx.full_struct_type(param_name);
+                    }
+                    // Coerce struct fields to match declared field types
+                    if let LltsType::Struct { fields: type_fields, .. } = struct_type {
+                        for (j, (_, field_ty)) in type_fields.iter().enumerate() {
+                            if j < fields.len() {
+                                let old = std::mem::replace(&mut fields[j], Expr::BoolLit(false));
+                                fields[j] = coerce_to_type(old, field_ty);
+                            }
+                        }
+                    }
+                }
+            }
+            // Coerce numeric literals to match param type
+            let old = std::mem::replace(&mut args[i], Expr::BoolLit(false));
+            args[i] = coerce_to_type(old, param_ty);
+        }
+    }
+}
+
 /// Try to lower an expression as a Stmt::Assign (for assignment and update expressions).
 /// Returns None for non-assignment expressions.
 pub(crate) fn try_lower_as_assign(expr: &Expression<'_>, ctx: &mut LowerCtx) -> Option<Stmt> {
@@ -623,7 +789,8 @@ pub(crate) fn try_lower_as_assign(expr: &Expression<'_>, ctx: &mut LowerCtx) -> 
                     if let LltsType::Struct { name: struct_name, .. } = &obj_type {
                         if let Some((field_index, field_type)) = ctx.lookup_field(struct_name, &field_name) {
                             let value = if assign.operator == AssignmentOperator::Assign {
-                                lower_expr(&assign.right, ctx)
+                                let v = lower_expr(&assign.right, ctx);
+                                coerce_to_type(v, &field_type)
                             } else {
                                 let op = match assign.operator {
                                     AssignmentOperator::Addition => BinOp::Add,
@@ -645,6 +812,7 @@ pub(crate) fn try_lower_as_assign(expr: &Expression<'_>, ctx: &mut LowerCtx) -> 
                                     field_type: field_type.clone(),
                                 };
                                 let rhs = lower_expr(&assign.right, ctx);
+                                let rhs = coerce_to_type(rhs, &field_type);
                                 Expr::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs), ty: field_type.clone() }
                             };
                             return Some(Stmt::FieldAssign {
@@ -659,8 +827,10 @@ pub(crate) fn try_lower_as_assign(expr: &Expression<'_>, ctx: &mut LowerCtx) -> 
             }
 
             let target = assignment_target_name(&assign.left);
+            let target_ty = ctx.var_types.get(&target).cloned().unwrap_or(LltsType::F64);
             let value = if assign.operator == AssignmentOperator::Assign {
-                lower_expr(&assign.right, ctx)
+                let v = lower_expr(&assign.right, ctx);
+                coerce_to_type(v, &target_ty)
             } else {
                 let op = match assign.operator {
                     AssignmentOperator::Addition => BinOp::Add,
@@ -675,10 +845,10 @@ pub(crate) fn try_lower_as_assign(expr: &Expression<'_>, ctx: &mut LowerCtx) -> 
                     AssignmentOperator::BitwiseXOR => BinOp::BitXor,
                     _ => BinOp::Add,
                 };
-                let ty = ctx.var_types.get(&target).cloned().unwrap_or(LltsType::F64);
-                let lhs = Expr::Var { name: target.clone(), ty: ty.clone() };
+                let lhs = Expr::Var { name: target.clone(), ty: target_ty.clone() };
                 let rhs = lower_expr(&assign.right, ctx);
-                Expr::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs), ty }
+                let rhs = coerce_to_type(rhs, &target_ty);
+                Expr::Binary { op, lhs: Box::new(lhs), rhs: Box::new(rhs), ty: target_ty }
             };
             // Option wrapping: when target type is Option<T>, wrap the value
             let value = if let Some(LltsType::Option(inner)) = ctx.var_types.get(&target) {

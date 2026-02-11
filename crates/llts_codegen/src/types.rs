@@ -280,6 +280,33 @@ impl<'ctx> TypeRegistry<'ctx> {
         }
     }
 
+    /// Public static version of type_size for use outside the registry.
+    pub fn type_size_of(ty: &LltsType) -> u64 {
+        match ty {
+            LltsType::Bool => 1,
+            LltsType::I8 | LltsType::U8 => 1,
+            LltsType::I16 | LltsType::U16 => 2,
+            LltsType::I32 | LltsType::U32 | LltsType::F32 => 4,
+            LltsType::I64 | LltsType::U64 | LltsType::F64 => 8,
+            LltsType::String | LltsType::Ptr => 16,
+            LltsType::Array(_) => 24,
+            LltsType::Function { .. } => 16,
+            LltsType::Option(_) => 16,
+            LltsType::Result { .. } => 16,
+            LltsType::Struct { fields, .. } => {
+                fields.iter().map(|(_, f)| Self::type_size_of(f)).sum()
+            }
+            LltsType::Union { variants, .. } => {
+                4 + variants
+                    .iter()
+                    .map(|(_, v)| Self::type_size_of(v))
+                    .max()
+                    .unwrap_or(0)
+            }
+            LltsType::Void | LltsType::Never => 0,
+        }
+    }
+
     pub fn context(&self) -> &'ctx Context {
         self.context
     }

@@ -1,6 +1,7 @@
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
+use inkwell::types::BasicType;
 use inkwell::values::{BasicValueEnum, FloatValue, FunctionValue, IntValue, PointerValue};
 use inkwell::{FloatPredicate, IntPredicate};
 use crate::types::{LltsType, TypeRegistry};
@@ -498,14 +499,12 @@ impl ExprCodegen {
         let i64_ty = context.i64_type();
         let elem_llvm_ty = registry.llvm_type(elem_type);
         let count = elements.len() as u64;
-        let elem_size = match elem_type {
-            LltsType::I8 | LltsType::U8 | LltsType::Bool => 1u64,
-            LltsType::I16 | LltsType::U16 => 2,
-            LltsType::I32 | LltsType::U32 | LltsType::F32 => 4,
-            LltsType::I64 | LltsType::U64 | LltsType::F64 => 8,
-            _ => 8, // conservative default
-        };
-        let total_size = i64_ty.const_int(count * elem_size, false);
+        let elem_size_val = elem_llvm_ty.size_of().unwrap_or(i64_ty.const_int(8, false));
+        let total_size = builder.build_int_mul(
+            i64_ty.const_int(count, false),
+            elem_size_val,
+            "arr_alloc_size",
+        ).unwrap();
 
         // malloc(count * elem_size).
         let malloc_fn = module.get_function("malloc").unwrap();

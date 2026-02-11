@@ -14,6 +14,8 @@ pub struct MemoryManager<'ctx> {
     malloc_fn: Option<FunctionValue<'ctx>>,
     /// Cached declaration of libc `free`.
     free_fn: Option<FunctionValue<'ctx>>,
+    /// Cached declaration of libc `realloc`.
+    realloc_fn: Option<FunctionValue<'ctx>>,
 }
 
 impl<'ctx> MemoryManager<'ctx> {
@@ -22,6 +24,7 @@ impl<'ctx> MemoryManager<'ctx> {
             context,
             malloc_fn: None,
             free_fn: None,
+            realloc_fn: None,
         }
     }
 
@@ -87,6 +90,19 @@ impl<'ctx> MemoryManager<'ctx> {
         let fn_type = void_ty.fn_type(&[ptr_ty.into()], false);
         let f = module.add_function("free", fn_type, None);
         self.free_fn = Some(f);
+        f
+    }
+
+    /// Ensure `realloc` is declared in the module and return it.
+    pub fn get_or_declare_realloc(&mut self, module: &Module<'ctx>) -> FunctionValue<'ctx> {
+        if let Some(f) = self.realloc_fn {
+            return f;
+        }
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let fn_type = ptr_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false);
+        let f = module.add_function("realloc", fn_type, None);
+        self.realloc_fn = Some(f);
         f
     }
 

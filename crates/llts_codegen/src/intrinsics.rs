@@ -269,6 +269,63 @@ impl<'ctx> Intrinsics<'ctx> {
             .unwrap();
     }
 
+    /// Print an integer without a trailing newline (for struct field printing).
+    pub fn build_print_i32_inline(
+        &mut self, builder: &Builder<'ctx>, module: &Module<'ctx>, value: IntValue<'ctx>,
+    ) {
+        let snprintf = self.declare_snprintf(module);
+        let write_fn = self.declare_write(module);
+        let i32_ty = self.context.i32_type();
+        let i64_ty = self.context.i64_type();
+        let buf = builder.build_alloca(self.context.i8_type().array_type(32), "fmt_buf").unwrap();
+        let buf_ptr = builder.build_pointer_cast(buf, self.context.ptr_type(AddressSpace::default()), "buf_ptr").unwrap();
+        let buf_size = i64_ty.const_int(32, false);
+        let fmt = builder.build_global_string_ptr("%d", "fmt_i32_nl").unwrap().as_pointer_value();
+        let len = builder.build_call(snprintf, &[buf_ptr.into(), buf_size.into(), fmt.into(), value.into()], "fmt_len")
+            .unwrap().try_as_basic_value().unwrap_basic().into_int_value();
+        let stdout = i32_ty.const_int(1, false);
+        let len_i64 = builder.build_int_z_extend(len, i64_ty, "len_i64").unwrap();
+        builder.build_call(write_fn, &[stdout.into(), buf_ptr.into(), len_i64.into()], "").unwrap();
+    }
+
+    /// Print an unsigned integer without a trailing newline.
+    pub fn build_print_u32_inline(
+        &mut self, builder: &Builder<'ctx>, module: &Module<'ctx>, value: IntValue<'ctx>,
+    ) {
+        let snprintf = self.declare_snprintf(module);
+        let write_fn = self.declare_write(module);
+        let i32_ty = self.context.i32_type();
+        let i64_ty = self.context.i64_type();
+        let buf = builder.build_alloca(self.context.i8_type().array_type(32), "fmt_buf").unwrap();
+        let buf_ptr = builder.build_pointer_cast(buf, self.context.ptr_type(AddressSpace::default()), "buf_ptr").unwrap();
+        let buf_size = i64_ty.const_int(32, false);
+        let fmt = builder.build_global_string_ptr("%u", "fmt_u32_nl").unwrap().as_pointer_value();
+        let len = builder.build_call(snprintf, &[buf_ptr.into(), buf_size.into(), fmt.into(), value.into()], "fmt_len")
+            .unwrap().try_as_basic_value().unwrap_basic().into_int_value();
+        let stdout = i32_ty.const_int(1, false);
+        let len_i64 = builder.build_int_z_extend(len, i64_ty, "len_i64").unwrap();
+        builder.build_call(write_fn, &[stdout.into(), buf_ptr.into(), len_i64.into()], "").unwrap();
+    }
+
+    /// Print a float without a trailing newline.
+    pub fn build_print_f64_inline(
+        &mut self, builder: &Builder<'ctx>, module: &Module<'ctx>, value: BasicValueEnum<'ctx>,
+    ) {
+        let snprintf = self.declare_snprintf(module);
+        let write_fn = self.declare_write(module);
+        let i32_ty = self.context.i32_type();
+        let i64_ty = self.context.i64_type();
+        let buf = builder.build_alloca(self.context.i8_type().array_type(64), "fmt_buf").unwrap();
+        let buf_ptr = builder.build_pointer_cast(buf, self.context.ptr_type(AddressSpace::default()), "buf_ptr").unwrap();
+        let buf_size = i64_ty.const_int(64, false);
+        let fmt = builder.build_global_string_ptr("%.15g", "fmt_f64_nl").unwrap().as_pointer_value();
+        let len = builder.build_call(snprintf, &[buf_ptr.into(), buf_size.into(), fmt.into(), value.into()], "fmt_len")
+            .unwrap().try_as_basic_value().unwrap_basic().into_int_value();
+        let stdout = i32_ty.const_int(1, false);
+        let len_i64 = builder.build_int_z_extend(len, i64_ty, "len_i64").unwrap();
+        builder.build_call(write_fn, &[stdout.into(), buf_ptr.into(), len_i64.into()], "").unwrap();
+    }
+
     // ---- Math intrinsics ----
 
     fn declare_math_intrinsics(&mut self, module: &Module<'ctx>) {
@@ -291,10 +348,37 @@ impl<'ctx> Intrinsics<'ctx> {
             self.cache.insert(name.to_string(), f);
         }
 
+        // Additional unary math: round, trunc
+        let extra_unary = ["llvm.round.f64", "llvm.trunc.f64"];
+        for name in extra_unary {
+            let fn_type = f64_ty.fn_type(&[f64_ty.into()], false);
+            let f = module.add_function(name, fn_type, None);
+            self.cache.insert(name.to_string(), f);
+        }
+
         // pow(base, exp) -> f64
         let pow_type = f64_ty.fn_type(&[f64_ty.into(), f64_ty.into()], false);
         let f = module.add_function("llvm.pow.f64", pow_type, None);
         self.cache.insert("llvm.pow.f64".to_string(), f);
+
+        // rand() -> i32 (libc)
+        let i32_ty = self.context.i32_type();
+        let rand_type = i32_ty.fn_type(&[], false);
+        let f = module.add_function("rand", rand_type, None);
+        self.cache.insert("rand".to_string(), f);
+
+        // srand(seed: u32) -> void (libc)
+        let void_ty = self.context.void_type();
+        let srand_type = void_ty.fn_type(&[i32_ty.into()], false);
+        let f = module.add_function("srand", srand_type, None);
+        self.cache.insert("srand".to_string(), f);
+
+        // fmin(a, b) -> f64 and fmax(a, b) -> f64 (libc)
+        let binary_f64_type = f64_ty.fn_type(&[f64_ty.into(), f64_ty.into()], false);
+        let f = module.add_function("fmin", binary_f64_type, None);
+        self.cache.insert("fmin".to_string(), f);
+        let f = module.add_function("fmax", binary_f64_type, None);
+        self.cache.insert("fmax".to_string(), f);
     }
 
     /// Get a cached intrinsic by name, or `None` if it hasn't been declared.

@@ -3,6 +3,7 @@ pub mod expr;
 pub mod intrinsics;
 pub mod memory;
 pub mod narrowing;
+pub mod stdlib;
 pub mod stmt;
 pub mod types;
 
@@ -1055,6 +1056,8 @@ impl<'ctx> CodeGenerator<'ctx> {
                         "abs" => "llvm.fabs.f64",
                         "floor" => "llvm.floor.f64",
                         "ceil" => "llvm.ceil.f64",
+                        "round" => "llvm.round.f64",
+                        "trunc" => "llvm.trunc.f64",
                         "sin" => "sin",
                         "cos" => "cos",
                         "log" => "log",
@@ -1072,6 +1075,45 @@ impl<'ctx> CodeGenerator<'ctx> {
                                     .expect("pow intrinsic failed");
                             }
                             panic!("Math.pow requires 2 arguments");
+                        }
+                        "min" => {
+                            if arg_vals.len() == 2 {
+                                let f = self.intrinsics.get("fmin").expect("fmin not declared");
+                                return self.builder
+                                    .build_call(f, &[arg_vals[0].into(), arg_vals[1].into()], "min")
+                                    .unwrap()
+                                    .try_as_basic_value()
+                                    .unwrap_basic();
+                            }
+                            panic!("Math.min requires 2 arguments");
+                        }
+                        "max" => {
+                            if arg_vals.len() == 2 {
+                                let f = self.intrinsics.get("fmax").expect("fmax not declared");
+                                return self.builder
+                                    .build_call(f, &[arg_vals[0].into(), arg_vals[1].into()], "max")
+                                    .unwrap()
+                                    .try_as_basic_value()
+                                    .unwrap_basic();
+                            }
+                            panic!("Math.max requires 2 arguments");
+                        }
+                        "random" => {
+                            let rand_fn = self.intrinsics.get("rand").expect("rand not declared");
+                            let rand_val = self.builder
+                                .build_call(rand_fn, &[], "rand_val")
+                                .unwrap()
+                                .try_as_basic_value()
+                                .unwrap_basic()
+                                .into_int_value();
+                            let f64_val = self.builder
+                                .build_signed_int_to_float(rand_val, self.context.f64_type(), "rand_f64")
+                                .unwrap();
+                            let max = self.context.f64_type().const_float(2147483647.0);
+                            return self.builder
+                                .build_float_div(f64_val, max, "random")
+                                .unwrap()
+                                .into();
                         }
                         other => panic!("unknown Math function: {other}"),
                     };
@@ -1110,6 +1152,180 @@ impl<'ctx> CodeGenerator<'ctx> {
                 args,
                 ret_type: _,
             } => {
+                use crate::stdlib::StdlibCodegen;
+
+                if class_name == "__Array" {
+                    let recv_type = self.infer_expr_type(receiver);
+                    let elem_type = match &recv_type {
+                        LltsType::Array(e) => *e.clone(),
+                        _ => LltsType::F64,
+                    };
+                    let recv = self.emit_expr(receiver);
+                    let arg_vals: Vec<BasicValueEnum<'ctx>> =
+                        args.iter().map(|a| self.emit_expr(a)).collect();
+                    let function = self.current_function.unwrap();
+
+                    return match method_name.as_str() {
+                        "push" => {
+                            let new_arr = StdlibCodegen::build_array_push(
+                                &self.builder, self.context, &self.module,
+                                &mut self.registry, &mut self.memory, function,
+                                recv, arg_vals[0], &elem_type,
+                            );
+                            // Store updated array back to the variable
+                            if let Expr::Var { name, .. } = receiver.as_ref() {
+                                if let Some((ptr, _)) = self.variables.get(name).cloned() {
+                                    self.builder.build_store(ptr, new_arr).unwrap();
+                                }
+                            }
+                            self.context.i8_type().const_int(0, false).into()
+                        }
+                        "pop" => {
+                            let (elem, new_arr) = StdlibCodegen::build_array_pop(
+                                &self.builder, self.context,
+                                &mut self.registry, function,
+                                recv, &elem_type,
+                            );
+                            // Store updated array back
+                            if let Expr::Var { name, .. } = receiver.as_ref() {
+                                if let Some((ptr, _)) = self.variables.get(name).cloned() {
+                                    self.builder.build_store(ptr, new_arr).unwrap();
+                                }
+                            }
+                            elem
+                        }
+                        "indexOf" => {
+                            StdlibCodegen::build_array_indexof(
+                                &self.builder, self.context,
+                                &mut self.registry, function,
+                                recv, arg_vals[0], &elem_type,
+                            )
+                        }
+                        "includes" => {
+                            StdlibCodegen::build_array_includes(
+                                &self.builder, self.context,
+                                &mut self.registry, function,
+                                recv, arg_vals[0], &elem_type,
+                            )
+                        }
+                        other => panic!("unknown __Array method: {other}"),
+                    };
+                }
+
+                if class_name == "__String" {
+                    let recv = self.emit_expr(receiver);
+                    let arg_vals: Vec<BasicValueEnum<'ctx>> =
+                        args.iter().map(|a| self.emit_expr(a)).collect();
+                    let function = self.current_function.unwrap();
+                    let i64_ty = self.context.i64_type();
+
+                    return match method_name.as_str() {
+                        "charAt" => {
+                            let idx = if arg_vals[0].is_float_value() {
+                                self.builder.build_float_to_signed_int(
+                                    arg_vals[0].into_float_value(), i64_ty, "ca_idx"
+                                ).unwrap()
+                            } else {
+                                let iv = arg_vals[0].into_int_value();
+                                if iv.get_type().get_bit_width() < 64 {
+                                    self.builder.build_int_z_extend(iv, i64_ty, "ca_idx").unwrap()
+                                } else { iv }
+                            };
+                            StdlibCodegen::build_string_charat(
+                                &self.builder, self.context, &self.module,
+                                &self.registry, &mut self.memory,
+                                recv, idx,
+                            )
+                        }
+                        "charCodeAt" => {
+                            let idx = if arg_vals[0].is_float_value() {
+                                self.builder.build_float_to_signed_int(
+                                    arg_vals[0].into_float_value(), i64_ty, "cc_idx"
+                                ).unwrap()
+                            } else {
+                                let iv = arg_vals[0].into_int_value();
+                                if iv.get_type().get_bit_width() < 64 {
+                                    self.builder.build_int_z_extend(iv, i64_ty, "cc_idx").unwrap()
+                                } else { iv }
+                            };
+                            StdlibCodegen::build_string_charcodeat(
+                                &self.builder, self.context,
+                                recv, idx,
+                            )
+                        }
+                        "indexOf" => {
+                            StdlibCodegen::build_string_indexof(
+                                &self.builder, self.context, &self.module,
+                                function, recv, arg_vals[0],
+                            )
+                        }
+                        "includes" => {
+                            StdlibCodegen::build_string_includes(
+                                &self.builder, self.context, &self.module,
+                                function, recv, arg_vals[0],
+                            )
+                        }
+                        "slice" => {
+                            let start = if arg_vals[0].is_float_value() {
+                                self.builder.build_float_to_signed_int(
+                                    arg_vals[0].into_float_value(), i64_ty, "sl_start"
+                                ).unwrap()
+                            } else {
+                                let iv = arg_vals[0].into_int_value();
+                                if iv.get_type().get_bit_width() < 64 {
+                                    self.builder.build_int_z_extend(iv, i64_ty, "sl_start").unwrap()
+                                } else { iv }
+                            };
+                            let end = if arg_vals[1].is_float_value() {
+                                self.builder.build_float_to_signed_int(
+                                    arg_vals[1].into_float_value(), i64_ty, "sl_end"
+                                ).unwrap()
+                            } else {
+                                let iv = arg_vals[1].into_int_value();
+                                if iv.get_type().get_bit_width() < 64 {
+                                    self.builder.build_int_z_extend(iv, i64_ty, "sl_end").unwrap()
+                                } else { iv }
+                            };
+                            StdlibCodegen::build_string_slice(
+                                &self.builder, self.context, &self.module,
+                                &self.registry, &mut self.memory,
+                                recv, start, end,
+                            )
+                        }
+                        "toUpperCase" => {
+                            StdlibCodegen::build_string_touppercase(
+                                &self.builder, self.context, &self.module,
+                                &self.registry, &mut self.memory, function, recv,
+                            )
+                        }
+                        "toLowerCase" => {
+                            StdlibCodegen::build_string_tolowercase(
+                                &self.builder, self.context, &self.module,
+                                &self.registry, &mut self.memory, function, recv,
+                            )
+                        }
+                        "trim" => {
+                            StdlibCodegen::build_string_trim(
+                                &self.builder, self.context, &self.module,
+                                &self.registry, &mut self.memory, function, recv,
+                            )
+                        }
+                        "startsWith" => {
+                            StdlibCodegen::build_string_startswith(
+                                &self.builder, self.context, &self.module,
+                                function, recv, arg_vals[0],
+                            )
+                        }
+                        "endsWith" => {
+                            StdlibCodegen::build_string_endswith(
+                                &self.builder, self.context, &self.module,
+                                function, recv, arg_vals[0],
+                            )
+                        }
+                        other => panic!("unknown __String method: {other}"),
+                    };
+                }
+
                 let recv = self.emit_expr(receiver);
                 let arg_vals: Vec<BasicValueEnum<'ctx>> =
                     args.iter().map(|a| self.emit_expr(a)).collect();
@@ -1526,6 +1742,84 @@ impl<'ctx> CodeGenerator<'ctx> {
                 phi.add_incoming(&[(&true_str, true_bb), (&false_str, false_bb)]);
                 phi.as_basic_value()
             }
+            LltsType::Struct { name, fields } if !fields.is_empty() => {
+                // Build "StructName { field1: val1, field2: val2 }" as a string.
+                let mut result = ExprCodegen::const_string(
+                    &self.builder, &self.module, self.context, &self.registry,
+                    &format!("{name} {{ "), "struct_str_hdr",
+                );
+                let struct_val = val.into_struct_value();
+                for (i, (fname, fty)) in fields.iter().enumerate() {
+                    let prefix = if i > 0 {
+                        format!(", {fname}: ")
+                    } else {
+                        format!("{fname}: ")
+                    };
+                    let prefix_str = ExprCodegen::const_string(
+                        &self.builder, &self.module, self.context, &self.registry,
+                        &prefix, &format!("sf_prefix_{i}"),
+                    );
+                    result = self.intrinsics.build_string_concat(
+                        &self.builder, &self.module, &self.registry, result, prefix_str,
+                    );
+
+                    let field_val = self.builder
+                        .build_extract_value(struct_val, i as u32, &format!("sf_{i}"))
+                        .unwrap();
+                    let field_str = match fty {
+                        LltsType::String => field_val,
+                        t if TypeRegistry::is_float(t) => {
+                            let fv: BasicValueEnum<'ctx> = if matches!(t, LltsType::F32) {
+                                self.builder.build_float_ext(
+                                    field_val.into_float_value(), self.context.f64_type(), "ext",
+                                ).unwrap().into()
+                            } else { field_val };
+                            self.build_snprintf_to_string("%.15g", fv)
+                        }
+                        t if TypeRegistry::is_integer(t) => {
+                            let iv = if field_val.into_int_value().get_type().get_bit_width() < 64 {
+                                if TypeRegistry::is_signed(t) {
+                                    self.builder.build_int_s_extend(field_val.into_int_value(), self.context.i64_type(), "ext").unwrap()
+                                } else {
+                                    self.builder.build_int_z_extend(field_val.into_int_value(), self.context.i64_type(), "ext").unwrap()
+                                }
+                            } else { field_val.into_int_value() };
+                            let fmt = if TypeRegistry::is_unsigned(t) { "%lu" } else { "%ld" };
+                            self.build_snprintf_to_string(fmt, iv.into())
+                        }
+                        LltsType::Bool => {
+                            let function = self.current_function.unwrap();
+                            let t_bb = self.context.append_basic_block(function, "sf_true");
+                            let f_bb = self.context.append_basic_block(function, "sf_false");
+                            let m_bb = self.context.append_basic_block(function, "sf_merge");
+                            self.builder.build_conditional_branch(field_val.into_int_value(), t_bb, f_bb).unwrap();
+                            self.builder.position_at_end(t_bb);
+                            let ts = ExprCodegen::const_string(&self.builder, &self.module, self.context, &self.registry, "true", "t");
+                            self.builder.build_unconditional_branch(m_bb).unwrap();
+                            self.builder.position_at_end(f_bb);
+                            let fs = ExprCodegen::const_string(&self.builder, &self.module, self.context, &self.registry, "false", "f");
+                            self.builder.build_unconditional_branch(m_bb).unwrap();
+                            self.builder.position_at_end(m_bb);
+                            let phi = self.builder.build_phi(self.registry.string_type(), "bool_sf").unwrap();
+                            phi.add_incoming(&[(&ts, t_bb), (&fs, f_bb)]);
+                            phi.as_basic_value()
+                        }
+                        _ => ExprCodegen::const_string(
+                            &self.builder, &self.module, self.context, &self.registry, "...", "nested",
+                        ),
+                    };
+                    result = self.intrinsics.build_string_concat(
+                        &self.builder, &self.module, &self.registry, result, field_str,
+                    );
+                }
+                let footer = ExprCodegen::const_string(
+                    &self.builder, &self.module, self.context, &self.registry,
+                    " }", "struct_str_ftr",
+                );
+                self.intrinsics.build_string_concat(
+                    &self.builder, &self.module, &self.registry, result, footer,
+                )
+            }
             _ => {
                 // Fallback: return "[object]".
                 ExprCodegen::const_string(
@@ -1712,6 +2006,87 @@ impl<'ctx> CodeGenerator<'ctx> {
                         .unwrap();
 
                     self.builder.position_at_end(done_bb);
+                }
+                LltsType::Struct { name, fields } if !fields.is_empty() => {
+                    // Print struct as: StructName { field1: val1, field2: val2 }
+                    let header = ExprCodegen::const_string(
+                        &self.builder, &self.module, self.context, &self.registry,
+                        &format!("{name} {{ "), "struct_hdr",
+                    );
+                    self.intrinsics.build_print_string(&self.builder, &self.module, header);
+
+                    let struct_val = val.into_struct_value();
+                    for (i, (fname, fty)) in fields.iter().enumerate() {
+                        // Print "field_name: "
+                        let prefix = if i > 0 {
+                            format!(", {fname}: ")
+                        } else {
+                            format!("{fname}: ")
+                        };
+                        let prefix_str = ExprCodegen::const_string(
+                            &self.builder, &self.module, self.context, &self.registry,
+                            &prefix, &format!("field_{i}_prefix"),
+                        );
+                        self.intrinsics.build_print_string(&self.builder, &self.module, prefix_str);
+
+                        // Extract and print the field value
+                        let field_val = self.builder
+                            .build_extract_value(struct_val, i as u32, &format!("field_{i}"))
+                            .unwrap();
+                        match fty {
+                            LltsType::String => {
+                                self.intrinsics.build_print_string(&self.builder, &self.module, field_val);
+                            }
+                            t if TypeRegistry::is_integer(t) => {
+                                let int_val = field_val.into_int_value();
+                                let unsigned = TypeRegistry::is_unsigned(t);
+                                let i32_val = if int_val.get_type().get_bit_width() < 32 {
+                                    if unsigned {
+                                        self.builder.build_int_z_extend(int_val, self.context.i32_type(), "ext").unwrap()
+                                    } else {
+                                        self.builder.build_int_s_extend(int_val, self.context.i32_type(), "ext").unwrap()
+                                    }
+                                } else { int_val };
+                                if unsigned {
+                                    self.intrinsics.build_print_u32_inline(&self.builder, &self.module, i32_val);
+                                } else {
+                                    self.intrinsics.build_print_i32_inline(&self.builder, &self.module, i32_val);
+                                }
+                            }
+                            t if TypeRegistry::is_float(t) => {
+                                let f64_val: BasicValueEnum<'ctx> = if matches!(t, LltsType::F32) {
+                                    self.builder.build_float_ext(field_val.into_float_value(), self.context.f64_type(), "ext").unwrap().into()
+                                } else { field_val };
+                                self.intrinsics.build_print_f64_inline(&self.builder, &self.module, f64_val);
+                            }
+                            LltsType::Bool => {
+                                let function = self.current_function.unwrap();
+                                let t_bb = self.context.append_basic_block(function, "sf_true");
+                                let f_bb = self.context.append_basic_block(function, "sf_false");
+                                let d_bb = self.context.append_basic_block(function, "sf_done");
+                                self.builder.build_conditional_branch(field_val.into_int_value(), t_bb, f_bb).unwrap();
+                                self.builder.position_at_end(t_bb);
+                                let ts = ExprCodegen::const_string(&self.builder, &self.module, self.context, &self.registry, "true", "t");
+                                self.intrinsics.build_print_string(&self.builder, &self.module, ts);
+                                self.builder.build_unconditional_branch(d_bb).unwrap();
+                                self.builder.position_at_end(f_bb);
+                                let fs = ExprCodegen::const_string(&self.builder, &self.module, self.context, &self.registry, "false", "f");
+                                self.intrinsics.build_print_string(&self.builder, &self.module, fs);
+                                self.builder.build_unconditional_branch(d_bb).unwrap();
+                                self.builder.position_at_end(d_bb);
+                            }
+                            _ => {
+                                let s = ExprCodegen::const_string(&self.builder, &self.module, self.context, &self.registry, "...", "nested");
+                                self.intrinsics.build_print_string(&self.builder, &self.module, s);
+                            }
+                        }
+                    }
+
+                    let footer = ExprCodegen::const_string(
+                        &self.builder, &self.module, self.context, &self.registry,
+                        " }\n", "struct_ftr",
+                    );
+                    self.intrinsics.build_print_string(&self.builder, &self.module, footer);
                 }
                 _ => {
                     // Fallback: print "<object>".

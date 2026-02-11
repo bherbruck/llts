@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use oxc_ast::ast::*;
 
 use llts_codegen::{
-    EnumDecl, Expr, FunctionDecl, ProgramIR, StructDecl,
+    EnumDecl, Expr, FunctionDecl, ProgramIR, Stmt, StructDecl,
     types::LltsType,
 };
 
@@ -38,6 +38,7 @@ pub(crate) fn lower_program_with_ctx(
     let mut structs = Vec::new();
     let mut enums = Vec::new();
     let mut functions = Vec::new();
+    let mut top_level_vars: Vec<Stmt> = Vec::new();
 
     // Helper: collect type declarations from a Declaration node (used for exports)
     fn collect_type_decl<'a>(
@@ -81,8 +82,8 @@ pub(crate) fn lower_program_with_ctx(
         }
     }
 
-    // Helper: collect function return type from a Declaration node
-    fn collect_fn_ret(decl: &Declaration<'_>, ctx: &mut LowerCtx, enum_names: &HashSet<String>) {
+    // Helper: collect function return type and parameter types from a Declaration node
+    fn collect_fn_sig(decl: &Declaration<'_>, ctx: &mut LowerCtx, enum_names: &HashSet<String>) {
         if let Declaration::FunctionDeclaration(func) = decl {
             if let Some(id) = &func.id {
                 let ret_type = func
@@ -101,6 +102,17 @@ pub(crate) fn lower_program_with_ctx(
                     other => other.clone(),
                 };
                 ctx.fn_ret_types.insert(id.name.to_string(), ret_type);
+                // Collect parameter types
+                let param_types: Vec<LltsType> = func.params.items.iter().map(|p| {
+                    let pty = p.type_annotation.as_ref()
+                        .map(|ann| lower_ts_type_with_enums(&ann.type_annotation, enum_names))
+                        .unwrap_or(LltsType::F64);
+                    match &pty {
+                        LltsType::Struct { name, fields } if fields.is_empty() => ctx.full_struct_type(name),
+                        other => other.clone(),
+                    }
+                }).collect();
+                ctx.fn_param_types.insert(id.name.to_string(), param_types);
             }
         }
     }
@@ -225,11 +237,22 @@ pub(crate) fn lower_program_with_ctx(
                         other => other.clone(),
                     };
                     ctx.fn_ret_types.insert(id.name.to_string(), ret_type);
+                    // Collect parameter types
+                    let param_types: Vec<LltsType> = func.params.items.iter().map(|p| {
+                        let pty = p.type_annotation.as_ref()
+                            .map(|ann| lower_ts_type_with_enums(&ann.type_annotation, &enum_names))
+                            .unwrap_or(LltsType::F64);
+                        match &pty {
+                            LltsType::Struct { name, fields } if fields.is_empty() => ctx.full_struct_type(name),
+                            other => other.clone(),
+                        }
+                    }).collect();
+                    ctx.fn_param_types.insert(id.name.to_string(), param_types);
                 }
             }
             Statement::ExportNamedDeclaration(export) => {
                 if let Some(decl) = &export.declaration {
-                    collect_fn_ret(decl, ctx, &enum_names);
+                    collect_fn_sig(decl, ctx, &enum_names);
                 }
             }
             Statement::ExportDefaultDeclaration(export) => {
@@ -251,6 +274,17 @@ pub(crate) fn lower_program_with_ctx(
                             other => other.clone(),
                         };
                         ctx.fn_ret_types.insert(id.name.to_string(), ret_type);
+                        // Collect parameter types
+                        let param_types: Vec<LltsType> = func.params.items.iter().map(|p| {
+                            let pty = p.type_annotation.as_ref()
+                                .map(|ann| lower_ts_type_with_enums(&ann.type_annotation, &enum_names))
+                                .unwrap_or(LltsType::F64);
+                            match &pty {
+                                LltsType::Struct { name, fields } if fields.is_empty() => ctx.full_struct_type(name),
+                                other => other.clone(),
+                            }
+                        }).collect();
+                        ctx.fn_param_types.insert(id.name.to_string(), param_types);
                     }
                 }
             }
@@ -309,23 +343,20 @@ pub(crate) fn lower_program_with_ctx(
                         }
                         Declaration::VariableDeclaration(var_decl) => {
                             for declarator in &var_decl.declarations {
-                                if let Some(init) = &declarator.init {
-                                    if matches!(init, Expression::ArrowFunctionExpression(_)) {
-                                        let name = binding_name(&declarator.id);
-                                        let lowered = lower_expr(init, ctx);
-                                        if let Expr::Var { name: ref lambda_name, .. } = lowered {
-                                            if lambda_name.starts_with("__lambda_") {
-                                                let lname = lambda_name.clone();
-                                                if let Some(func) = ctx.pending_functions.iter_mut().find(|f| f.name == lname) {
-                                                    func.name = name.clone();
-                                                }
-                                                if let Some(ret) = ctx.fn_ret_types.get(&lname).cloned() {
-                                                    ctx.fn_ret_types.insert(name, ret);
-                                                }
-                                            }
-                                        }
-                                    }
+                                let name = binding_name(&declarator.id);
+                                let ty = declarator
+                                    .type_annotation
+                                    .as_ref()
+                                    .map(|ann| lower_ts_type_with_enums(&ann.type_annotation, &ctx.enum_names()))
+                                    .or_else(|| declarator.init.as_ref().map(|e| infer_expr_type(e)))
+                                    .unwrap_or(LltsType::F64);
+                                ctx.var_types.insert(name.clone(), ty.clone());
+                                let init = declarator.init.as_ref().map(|e| lower_expr(e, ctx));
+                                // Skip arrow function initializers (handled as pending functions)
+                                if let Some(Expr::Var { name: ref ln, .. }) = init {
+                                    if ln.starts_with("__lambda_") { continue; }
                                 }
+                                top_level_vars.push(Stmt::VarDecl { name, ty, init });
                             }
                         }
                         _ => {}
@@ -345,26 +376,14 @@ pub(crate) fn lower_program_with_ctx(
                     _ => {}
                 }
             }
-            // Top-level variable declarations: process arrow function initializers
-            Statement::VariableDeclaration(decl) => {
-                for declarator in &decl.declarations {
-                    if let Some(init) = &declarator.init {
-                        if matches!(init, Expression::ArrowFunctionExpression(_)) {
-                            let name = binding_name(&declarator.id);
-                            let lowered = lower_expr(init, ctx);
-                            // Rename the pending lambda to the variable name
-                            if let Expr::Var { name: ref lambda_name, .. } = lowered {
-                                if lambda_name.starts_with("__lambda_") {
-                                    let lname = lambda_name.clone();
-                                    if let Some(func) = ctx.pending_functions.iter_mut().find(|f| f.name == lname) {
-                                        func.name = name.clone();
-                                    }
-                                    if let Some(ret) = ctx.fn_ret_types.get(&lname).cloned() {
-                                        ctx.fn_ret_types.insert(name, ret);
-                                    }
-                                }
-                            }
-                        }
+            // Top-level variable declarations: lower into statements for main
+            Statement::VariableDeclaration(_) => {
+                let lowered = lower_stmt(stmt, ctx);
+                for s in lowered {
+                    // Arrow function initializers become pending functions (already
+                    // handled inside lower_stmt), so only collect VarDecl stmts.
+                    if matches!(s, Stmt::VarDecl { .. }) {
+                        top_level_vars.push(s);
                     }
                 }
             }
@@ -408,6 +427,14 @@ pub(crate) fn lower_program_with_ctx(
                     functions.push(specialized);
                 }
             }
+        }
+    }
+
+    // Prepend top-level variable declarations to main's body.
+    if !top_level_vars.is_empty() {
+        if let Some(main_fn) = functions.iter_mut().find(|f| f.name == "main") {
+            top_level_vars.append(&mut main_fn.body);
+            main_fn.body = top_level_vars;
         }
     }
 

@@ -214,6 +214,15 @@ impl BorrowChecker {
         }
     }
 
+    /// Release all active borrows (called at statement boundaries).
+    pub fn release_all_borrows(&mut self) {
+        for state in self.states.values_mut() {
+            if matches!(state, BorrowState::ImmutableBorrow { .. } | BorrowState::MutableBorrow) {
+                *state = BorrowState::Unborrowed;
+            }
+        }
+    }
+
     /// Mark a variable as moved. Copy types are never moved.
     pub fn mark_moved(&mut self, name: &str, span: Span) {
         // Copy types are implicitly copied, never moved.
@@ -294,9 +303,13 @@ impl BorrowChecker {
                         self.check_expression(init);
                     }
                 }
+                // Temporary borrows from initializers don't leak into subsequent statements.
+                self.release_all_borrows();
             }
             Statement::ExpressionStatement(expr_stmt) => {
                 self.check_expression(&expr_stmt.expression);
+                // Temporary borrows from this statement don't leak into the next.
+                self.release_all_borrows();
             }
             Statement::ReturnStatement(ret) => {
                 if let Some(arg) = &ret.argument {

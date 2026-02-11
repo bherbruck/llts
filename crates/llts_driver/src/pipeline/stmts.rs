@@ -6,8 +6,21 @@ use llts_codegen::{
 };
 
 use super::context::LowerCtx;
-use super::utils::{binding_name, detect_null_comparison, infer_expr_type, ir_expr_type, property_key_name};
+use super::utils::{binding_name, coerce_to_type, detect_null_comparison, infer_expr_type, ir_expr_type, property_key_name};
 use super::{build_union_lit_from_object, lower_expr, lower_ts_type_with_enums, try_lower_as_assign, try_lower_discriminated_switch};
+
+/// After patching a StructLit's struct_type, coerce field values to match
+/// the declared field types (e.g. f64 literal → i64 IntLit).
+fn coerce_struct_fields(fields: &mut Vec<Expr>, struct_type: &LltsType) {
+    if let LltsType::Struct { fields: type_fields, .. } = struct_type {
+        for (i, (_, field_ty)) in type_fields.iter().enumerate() {
+            if i < fields.len() {
+                let old = std::mem::replace(&mut fields[i], Expr::BoolLit(false));
+                fields[i] = coerce_to_type(old, field_ty);
+            }
+        }
+    }
+}
 
 pub(crate) fn lower_stmts(stmts: &[Statement<'_>], ctx: &mut LowerCtx) -> Vec<Stmt> {
     stmts.iter().flat_map(|s| lower_stmt(s, ctx)).collect()
@@ -33,10 +46,11 @@ pub(crate) fn lower_stmt(stmt: &Statement<'_>, ctx: &mut LowerCtx) -> Vec<Stmt> 
                             };
                             let tmp_name = format!("__destructure_tmp_{}", result.len());
                             let mut patched_init = init_lowered;
-                            if let Expr::StructLit { struct_type, .. } = &mut patched_init {
+                            if let Expr::StructLit { struct_type, fields } = &mut patched_init {
                                 if matches!(struct_type, LltsType::Struct { name: n, .. } if n.is_empty()) {
                                     *struct_type = init_ty.clone();
                                 }
+                                coerce_struct_fields(fields, struct_type);
                             }
                             ctx.var_types.insert(tmp_name.clone(), init_ty.clone());
                             result.push(Stmt::VarDecl {
@@ -161,9 +175,41 @@ pub(crate) fn lower_stmt(stmt: &Statement<'_>, ctx: &mut LowerCtx) -> Vec<Stmt> 
                         } else {
                             declarator.init.as_ref().map(|e| lower_expr(e, ctx))
                         };
-                        if let Some(Expr::StructLit { struct_type, .. }) = &mut init {
+                        // Coerce init to the declared type (e.g. `const x: i64 = 1`)
+                        init = init.map(|e| coerce_to_type(e, &ty));
+                        if let Some(Expr::StructLit { struct_type, fields }) = &mut init {
                             if matches!(struct_type, LltsType::Struct { name: n, .. } if n.is_empty()) {
                                 *struct_type = ty.clone();
+                            }
+                            coerce_struct_fields(fields, struct_type);
+                        }
+                        // Array element type coercion: when declared type is Array(T)
+                        // and init is ArrayLit { elem_type: U } where T != U,
+                        // patch elem_type to T and wrap each element in Cast.
+                        if let LltsType::Array(ref declared_elem) = ty {
+                            if let Some(Expr::ArrayLit { elem_type, elements }) = &mut init {
+                                if *elem_type != **declared_elem {
+                                    let from = elem_type.clone();
+                                    *elem_type = *declared_elem.clone();
+                                    // Also patch StructLit elements inside array literals
+                                    if let LltsType::Struct { name: sname, .. } = &**declared_elem {
+                                        for el in elements.iter_mut() {
+                                            if let Expr::StructLit { struct_type, fields } = el {
+                                                if matches!(struct_type, LltsType::Struct { name: n, .. } if n.is_empty()) {
+                                                    *struct_type = ctx.full_struct_type(sname);
+                                                }
+                                                coerce_struct_fields(fields, struct_type);
+                                            }
+                                        }
+                                    }
+                                    // For numeric type mismatches, coerce each element
+                                    if from != *elem_type && !matches!(*elem_type, LltsType::Struct { .. }) {
+                                        let to = elem_type.clone();
+                                        *elements = elements.drain(..).map(|e| {
+                                            coerce_to_type(e, &to)
+                                        }).collect();
+                                    }
+                                }
                             }
                         }
                         // Option wrapping: when declared type is Option<T>,
@@ -207,13 +253,18 @@ pub(crate) fn lower_stmt(stmt: &Statement<'_>, ctx: &mut LowerCtx) -> Vec<Stmt> 
         }
         Statement::ReturnStatement(ret) => {
             let mut expr = ret.argument.as_ref().map(|e| lower_expr(e, ctx));
+            // Coerce return value to function return type
+            if let Some(fn_ret) = ctx.var_types.get("__fn_return_type__").cloned() {
+                expr = expr.map(|e| coerce_to_type(e, &fn_ret));
+            }
             // Patch StructLit type from function return type
-            if let Some(Expr::StructLit { struct_type, .. }) = &mut expr {
+            if let Some(Expr::StructLit { struct_type, fields }) = &mut expr {
                 if matches!(struct_type, LltsType::Struct { name: n, .. } if n.is_empty()) {
                     if let Some(fn_ret) = ctx.var_types.get("__fn_return_type__") {
                         *struct_type = fn_ret.clone();
                     }
                 }
+                coerce_struct_fields(fields, struct_type);
             }
             // Option wrapping for return values when function returns Option<T>
             if let Some(fn_ret) = ctx.var_types.get("__fn_return_type__").cloned() {
@@ -344,8 +395,19 @@ pub(crate) fn lower_stmt(stmt: &Statement<'_>, ctx: &mut LowerCtx) -> Vec<Stmt> 
                 }
                 _ => "_".to_string(),
             };
-            let elem_type = LltsType::F64; // inferred from iterable at analysis time
             let iterable = lower_expr(&forof.right, ctx);
+            let elem_type = match ir_expr_type(&iterable) {
+                LltsType::Array(inner) => *inner,
+                _ => LltsType::F64,
+            };
+            // Resolve empty struct types to full struct types
+            let elem_type = match &elem_type {
+                LltsType::Struct { name, fields } if fields.is_empty() => {
+                    ctx.full_struct_type(name)
+                }
+                other => other.clone(),
+            };
+            ctx.var_types.insert(elem_name.clone(), elem_type.clone());
             let body = match &forof.body {
                 Statement::BlockStatement(block) => lower_stmts(&block.body, ctx),
                 other => lower_stmt(other, ctx),

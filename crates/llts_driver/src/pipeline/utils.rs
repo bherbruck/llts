@@ -47,6 +47,15 @@ pub(crate) fn infer_expr_type(expr: &Expression<'_>) -> LltsType {
         Expression::NumericLiteral(_) => LltsType::F64,
         Expression::BooleanLiteral(_) => LltsType::Bool,
         Expression::StringLiteral(_) | Expression::TemplateLiteral(_) => LltsType::String,
+        Expression::ArrayExpression(arr) => {
+            let elem_type = arr
+                .elements
+                .first()
+                .and_then(|el| el.as_expression())
+                .map(|e| infer_expr_type(e))
+                .unwrap_or(LltsType::F64);
+            LltsType::Array(Box::new(elem_type))
+        }
         _ => LltsType::F64,
     }
 }
@@ -93,6 +102,53 @@ pub(crate) fn detect_null_comparison(expr: &Expression<'_>, ctx: &LowerCtx) -> O
         Some((var_name, *inner.clone(), is_ne))
     } else {
         None
+    }
+}
+
+/// Returns true if the given LltsType is an integer type.
+fn is_integer_type(ty: &LltsType) -> bool {
+    matches!(ty, LltsType::I8 | LltsType::I16 | LltsType::I32 | LltsType::I64
+              | LltsType::U8 | LltsType::U16 | LltsType::U32 | LltsType::U64)
+}
+
+/// Coerce a lowered expression to match an expected type.
+///
+/// When a numeric literal defaults to f64 but the expected type is an integer,
+/// this converts it directly (e.g. `FloatLit(1.0)` → `IntLit(1, I64)`).
+/// Decimal literals (e.g. 1.5) are kept as float and wrapped in a Cast if needed.
+pub(crate) fn coerce_to_type(expr: Expr, expected: &LltsType) -> Expr {
+    let expr_ty = ir_expr_type(&expr);
+    if expr_ty == *expected {
+        return expr;
+    }
+    // Don't coerce non-numeric types
+    if matches!(expected, LltsType::String | LltsType::Bool | LltsType::Void
+                | LltsType::Struct { .. } | LltsType::Array(_) | LltsType::Option(_)
+                | LltsType::Union { .. }) {
+        return expr;
+    }
+    match &expr {
+        // FloatLit with whole-number value → IntLit when expected is integer
+        Expr::FloatLit { value, .. } if is_integer_type(expected) && value.fract() == 0.0 => {
+            Expr::IntLit { value: *value as i64, ty: expected.clone() }
+        }
+        // FloatLit → FloatLit with different float type (e.g. F64 → F32)
+        Expr::FloatLit { value, .. } if matches!(expected, LltsType::F32 | LltsType::F64) => {
+            Expr::FloatLit { value: *value, ty: expected.clone() }
+        }
+        // FloatLit with decimal to integer → Cast (lossy, but user explicitly typed it)
+        Expr::FloatLit { .. } if is_integer_type(expected) => {
+            Expr::Cast { value: Box::new(expr), from: expr_ty, to: expected.clone() }
+        }
+        // IntLit → different integer type
+        Expr::IntLit { value, .. } if is_integer_type(expected) => {
+            Expr::IntLit { value: *value, ty: expected.clone() }
+        }
+        // IntLit → float type
+        Expr::IntLit { value, .. } if matches!(expected, LltsType::F32 | LltsType::F64) => {
+            Expr::FloatLit { value: *value as f64, ty: expected.clone() }
+        }
+        _ => expr,
     }
 }
 

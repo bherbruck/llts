@@ -26,6 +26,8 @@ pub(crate) struct LowerCtx {
     pub(crate) var_types: HashMap<String, LltsType>,
     /// Function name -> return type.
     pub(crate) fn_ret_types: HashMap<String, LltsType>,
+    /// Function name -> parameter types (for coercing arguments at call sites).
+    pub(crate) fn_param_types: HashMap<String, Vec<LltsType>>,
     /// Counter for generating unique lambda function names.
     pub(crate) lambda_counter: usize,
     /// Lambda functions generated from arrow expressions, to be appended after lowering.
@@ -64,6 +66,7 @@ impl LowerCtx {
             enum_defs: HashMap::new(),
             var_types: HashMap::new(),
             fn_ret_types: HashMap::new(),
+            fn_param_types: HashMap::new(),
             lambda_counter: 0,
             pending_functions: Vec::new(),
             string_literal_unions: HashMap::new(),
